@@ -1,19 +1,3 @@
-"""
-hotel_utils.py
---------------
-Member 3 module: Hotel & Accommodation Recommendation.
-
-Responsibilities covered here:
-- Load and clean the hotel dataset (hotel.xlsx)
-- Match hotels to the tourist's destinations + travel style
-- Fit hotel picks within the per-city slice of the overall hotel budget
-- Return a clean, JSON-serializable structure other members (esp. Member 4 /
-  Member 1) can consume
-- Optionally generate a natural-language explanation of each pick via Groq
-  (the LLM only phrases sentences from numbers we already computed — it
-  never invents a price, rating, or review count itself)
-"""
-
 import os
 import math
 import pandas as pd
@@ -27,8 +11,8 @@ except ImportError:
 
 HOTEL_FILE = "hotel.xlsx"
 
-# Member 2's budget planner uses "Budget / Backpacker", "Standard", "Luxury"
-# The hotel dataset uses "Budget/Backpacker", "Standard", "Luxury"
+# Member 2's budget planner used "Budget / Backpacker", "Standard", "Luxury"
+# So, I made the hotel dataset using 3 tier/types of hotel: "Budget/Backpacker", "Standard", "Luxury"
 TIER_MAP = {
     "Budget / Backpacker": "Budget/Backpacker",
     "Standard": "Standard",
