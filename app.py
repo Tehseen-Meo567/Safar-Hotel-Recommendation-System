@@ -281,25 +281,40 @@ else:
             f"(estimated PKR {total_hotel_cost:,.0f} / ${total_hotel_cost / USD_TO_PKR_RATE:,.2f})."
         )
 
-    # Budget vs. estimated cost per city — visual comparison in the same
-    # palette as the overall expense donut chart above.
+    # Budget UTILIZATION per city — a horizontal % bar with a 100% reference
+    # line, colored red/green by over/under budget. Tells the "did we stay
+    # in budget" story directly, using the same red/orange/green language
+    # as the per-hotel match-score bars.
     if len(destinations) >= 1:
-        chart_rows = []
+        util_rows = []
         for city in destinations:
             cdata = hotel_recommendations.get(city, {})
+            budget = cdata.get("per_city_budget_pkr", 0)
             top_cost = cdata["hotels"][0]["estimated_stay_cost_pkr"] if cdata.get("hotels") else 0
-            chart_rows.append({
+            pct = (top_cost / budget * 100) if budget > 0 else 0
+            util_rows.append({
                 "City": city,
-                "Budget Allocated": cdata.get("per_city_budget_pkr", 0),
-                "Top Pick Cost": top_cost,
+                "Utilization": pct,
+                "Status": "Over budget" if pct > 100 else "Within budget",
+                "label": f"{pct:,.0f}%",
             })
-        chart_df = pd.DataFrame(chart_rows)
+        util_df = pd.DataFrame(util_rows)
         fig_hotels = px.bar(
-            chart_df.melt(id_vars="City", var_name="Type", value_name="PKR"),
-            x="City", y="PKR", color="Type", barmode="group",
-            color_discrete_map={"Budget Allocated": "#95d5b2", "Top Pick Cost": "#1b4332"},
+            util_df, x="Utilization", y="City", orientation="h",
+            color="Status", text="label",
+            color_discrete_map={"Within budget": "#2d6a4f", "Over budget": "#e76f51"},
         )
-        fig_hotels.update_layout(margin=dict(t=10, b=10, l=10, r=10), legend_title_text="")
+        fig_hotels.add_vline(
+            x=100, line_dash="dash", line_color="#888",
+            annotation_text="Budget line (100%)", annotation_position="top",
+        )
+        fig_hotels.update_traces(textposition="outside")
+        fig_hotels.update_layout(
+            margin=dict(t=30, b=10, l=10, r=10),
+            legend_title_text="",
+            xaxis_title="% of per-city hotel budget used (top pick)",
+            yaxis_title="",
+        )
         st.plotly_chart(fig_hotels, use_container_width=True)
 
     st.write("")
@@ -402,9 +417,9 @@ payload = {
 payload_json = json.dumps(payload, indent=4)
 
 st.download_button(
-    label="📥 Download Trip Payload (budget_data.json)",
+    label="📥 Download Trip Payload (hotel-recommendation.json)",
     data=payload_json,
-    file_name="budget_data.json",
+    file_name="hotel-recommendation.json",
     mime="application/json"
 )
 
