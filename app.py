@@ -281,41 +281,52 @@ else:
             f"(estimated PKR {total_hotel_cost:,.0f} / ${total_hotel_cost / USD_TO_PKR_RATE:,.2f})."
         )
 
-    # Budget UTILIZATION per city — a horizontal % bar with a 100% reference
-    # line, colored red/green by over/under budget. Tells the "did we stay
-    # in budget" story directly, using the same red/orange/green language
-    # as the per-hotel match-score bars.
+    # Budget vs. estimated cost per city, shown half-width alongside a
+    # compact summary table — mirroring the table+donut layout used for
+    # the overall expense breakdown above, instead of a full-width chart.
     if len(destinations) >= 1:
-        util_rows = []
+        summary_rows = []
         for city in destinations:
             cdata = hotel_recommendations.get(city, {})
             budget = cdata.get("per_city_budget_pkr", 0)
             top_cost = cdata["hotels"][0]["estimated_stay_cost_pkr"] if cdata.get("hotels") else 0
             pct = (top_cost / budget * 100) if budget > 0 else 0
-            util_rows.append({
+            summary_rows.append({
                 "City": city,
-                "Utilization": pct,
-                "Status": "Over budget" if pct > 100 else "Within budget",
-                "label": f"{pct:,.0f}%",
+                "Tier Used": cdata.get("tier_used") or "-",
+                "Budget (PKR)": budget,
+                "Top Pick (PKR)": top_cost,
+                "% Used": f"{pct:,.0f}%",
             })
-        util_df = pd.DataFrame(util_rows)
-        fig_hotels = px.bar(
-            util_df, x="Utilization", y="City", orientation="h",
-            color="Status", text="label",
-            color_discrete_map={"Within budget": "#2d6a4f", "Over budget": "#e76f51"},
-        )
-        fig_hotels.add_vline(
-            x=100, line_dash="dash", line_color="#888",
-            annotation_text="Budget line (100%)", annotation_position="top",
-        )
-        fig_hotels.update_traces(textposition="outside")
-        fig_hotels.update_layout(
-            margin=dict(t=30, b=10, l=10, r=10),
-            legend_title_text="",
-            xaxis_title="% of per-city hotel budget used (top pick)",
-            yaxis_title="",
-        )
-        st.plotly_chart(fig_hotels, use_container_width=True)
+        summary_df = pd.DataFrame(summary_rows)
+
+        hchart_col, htable_col = st.columns([1, 1])
+
+        with hchart_col:
+            chart_df = summary_df.rename(
+                columns={"Budget (PKR)": "Budget Allocated", "Top Pick (PKR)": "Top Pick Cost"}
+            )[["City", "Budget Allocated", "Top Pick Cost"]]
+            fig_hotels = px.bar(
+                chart_df.melt(id_vars="City", var_name="Type", value_name="PKR"),
+                x="City", y="PKR", color="Type", barmode="group",
+                color_discrete_sequence=["#95d5b2", "#1b4332"],
+            )
+            fig_hotels.update_layout(
+                margin=dict(t=20, b=20, l=20, r=20),
+                legend_title_text="",
+                showlegend=True,
+            )
+            st.plotly_chart(fig_hotels, use_container_width=True)
+
+        with htable_col:
+            st.dataframe(
+                summary_df.style.format({
+                    "Budget (PKR)": "{:,.0f}",
+                    "Top Pick (PKR)": "{:,.0f}",
+                }),
+                use_container_width=True,
+                hide_index=True,
+            )
 
     st.write("")
 
@@ -388,7 +399,10 @@ st.divider()
 # ----------------------------------------------------
 st.subheader("3. Trip Payload")
 
-payload = {
+# Original Member 2 schema, unchanged — kept separate so anything already
+# consuming budget_data.json (per the team's original contract) doesn't
+# have to change or wade through hotel data it doesn't expect.
+budget_payload = {
     "user_profile": {
         "travelers": int(travelers),
         "duration_days": int(trip_duration),
@@ -410,18 +424,37 @@ payload = {
         "activities": float(alloc_activities / USD_TO_PKR_RATE)
     },
     "is_feasible": bool(is_feasible),
-    "hotel_recommendations": hotel_recommendations,
-    "total_estimated_hotel_cost_pkr": float(total_hotel_cost)
 }
 
-payload_json = json.dumps(payload, indent=4)
+# Fuller payload — everything above PLUS hotel recommendations, for
+# Member 4/Member 1 or anyone who wants the complete picture in one file.
+hotel_payload = {
+    **budget_payload,
+    "hotel_recommendations": hotel_recommendations,
+    "total_estimated_hotel_cost_pkr": float(total_hotel_cost),
+}
 
-st.download_button(
-    label="📥 Download Trip Payload (hotel-recommendation.json)",
-    data=payload_json,
-    file_name="hotel-recommendation.json",
-    mime="application/json"
-)
+budget_payload_json = json.dumps(budget_payload, indent=4)
+hotel_payload_json = json.dumps(hotel_payload, indent=4)
 
-with st.expander("View Payload Preview"):
-    st.json(payload)
+dl1, dl2 = st.columns(2)
+with dl1:
+    st.download_button(
+        label="📥 Download Budget Payload (budget_data.json)",
+        data=budget_payload_json,
+        file_name="budget_data.json",
+        mime="application/json"
+    )
+with dl2:
+    st.download_button(
+        label="📥 Download Hotel Recommendations (hotel-recommendation.json)",
+        data=hotel_payload_json,
+        file_name="hotel-recommendation.json",
+        mime="application/json"
+    )
+
+preview_tab1, preview_tab2 = st.tabs(["budget_data.json preview", "hotel-recommendation.json preview"])
+with preview_tab1:
+    st.json(budget_payload)
+with preview_tab2:
+    st.json(hotel_payload)
