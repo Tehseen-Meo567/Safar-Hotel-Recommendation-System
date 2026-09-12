@@ -910,3 +910,5 @@ with dl2:
 preview_tab1, preview_tab2 = st.tabs(["budget_data.json preview", "hotel-recommendation.json preview"])
 with preview_tab1:
     st.json(budget_payload)
+with preview_tab2:
+    st.json(hotel_payload)
