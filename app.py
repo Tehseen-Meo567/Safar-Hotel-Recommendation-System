@@ -42,6 +42,26 @@ st.markdown("""
         padding: 1.2rem;
         border: 1px solid #e9ecef;
     }
+    .tier-badge {
+        display: inline-block;
+        padding: 0.15rem 0.6rem;
+        border-radius: 999px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: white;
+    }
+    .score-bar-track {
+        background-color: #e9ecef;
+        border-radius: 999px;
+        height: 8px;
+        width: 100%;
+        overflow: hidden;
+        margin: 0.3rem 0 0.6rem 0;
+    }
+    .score-bar-fill {
+        height: 100%;
+        border-radius: 999px;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -201,6 +221,23 @@ use_ai_explanations = st.toggle(
          "Falls back to a plain-text summary if no GROQ_API_KEY is configured.",
 )
 
+TIER_COLORS = {
+    "Budget/Backpacker": "#74c69d",
+    "Standard": "#2d6a4f",
+    "Luxury": "#1b4332",
+    "Mixed (requested tier unavailable here)": "#95a5a6",
+}
+
+
+def _score_color(score: float) -> str:
+    if score >= 75:
+        return "#2d6a4f"
+    elif score >= 50:
+        return "#e9c46a"
+    else:
+        return "#e76f51"
+
+
 if not destinations:
     st.info("Select at least one destination above to see hotel recommendations.")
     hotel_recommendations = {}
@@ -218,25 +255,52 @@ else:
     total_hotel_cost = total_estimated_hotel_cost(hotel_recommendations)
 
     hc1, hc2 = st.columns(2)
-    hc1.metric("Hotel Budget Allocated", f"PKR {alloc_hotels:,.0f}")
+    hc1.metric(
+        "Hotel Budget Allocated",
+        f"PKR {alloc_hotels:,.0f}",
+        f"${alloc_hotels / USD_TO_PKR_RATE:,.2f}",
+        delta_color="off",
+    )
     hc2.metric(
         "Estimated Hotel Cost (top picks)",
         f"PKR {total_hotel_cost:,.0f}",
-        f"{(total_hotel_cost - alloc_hotels):+,.0f} vs. budget",
+        f"${total_hotel_cost / USD_TO_PKR_RATE:,.2f}  ·  {(total_hotel_cost - alloc_hotels):+,.0f} PKR vs. budget",
         delta_color="inverse",
     )
 
     if total_hotel_cost > alloc_hotels:
         st.warning(
-            f"Top-ranked hotel picks come to PKR {total_hotel_cost:,.0f}, "
-            f"which is above the PKR {alloc_hotels:,.0f} hotel budget. "
-            "Consider a lower travel-style tier or fewer nights per city."
+            f"Top-ranked hotel picks come to PKR {total_hotel_cost:,.0f} "
+            f"(${total_hotel_cost / USD_TO_PKR_RATE:,.2f}), which is above the "
+            f"PKR {alloc_hotels:,.0f} hotel budget. Consider a lower travel-style "
+            "tier or fewer nights per city."
         )
     else:
         st.success(
             f"Recommended hotels fit within the PKR {alloc_hotels:,.0f} hotel budget "
-            f"(estimated PKR {total_hotel_cost:,.0f})."
+            f"(estimated PKR {total_hotel_cost:,.0f} / ${total_hotel_cost / USD_TO_PKR_RATE:,.2f})."
         )
+
+    # Budget vs. estimated cost per city — visual comparison in the same
+    # palette as the overall expense donut chart above.
+    if len(destinations) >= 1:
+        chart_rows = []
+        for city in destinations:
+            cdata = hotel_recommendations.get(city, {})
+            top_cost = cdata["hotels"][0]["estimated_stay_cost_pkr"] if cdata.get("hotels") else 0
+            chart_rows.append({
+                "City": city,
+                "Budget Allocated": cdata.get("per_city_budget_pkr", 0),
+                "Top Pick Cost": top_cost,
+            })
+        chart_df = pd.DataFrame(chart_rows)
+        fig_hotels = px.bar(
+            chart_df.melt(id_vars="City", var_name="Type", value_name="PKR"),
+            x="City", y="PKR", color="Type", barmode="group",
+            color_discrete_map={"Budget Allocated": "#95d5b2", "Top Pick Cost": "#1b4332"},
+        )
+        fig_hotels.update_layout(margin=dict(t=10, b=10, l=10, r=10), legend_title_text="")
+        st.plotly_chart(fig_hotels, use_container_width=True)
 
     st.write("")
 
@@ -261,14 +325,25 @@ else:
                 f"🛏️ {rooms} rooms needed for {travelers} guests<br>"
                 if rooms > 1 else ""
             )
+            badge_color = TIER_COLORS.get(hotel["hotel_type"], "#6c757d")
+            score = hotel["recommendation_score"]
+            score_color = _score_color(score)
+            price_usd = hotel["price_per_day_pkr"] / USD_TO_PKR_RATE
+            total_usd = hotel["estimated_stay_cost_pkr"] / USD_TO_PKR_RATE
+
             with col:
                 st.markdown(
                     f"""<div class="card-box">
-                    <b>{hotel['hotel_name']}</b><br>
-                    ⭐ {hotel['rating']} &nbsp;|&nbsp; {hotel['hotel_type']}<br>
+                    <b>{hotel['hotel_name']}</b>
+                    <span class="tier-badge" style="background-color:{badge_color};">{hotel['hotel_type']}</span><br>
+                    <span style="font-size:0.8rem;color:#666;">Match score</span>
+                    <div class="score-bar-track">
+                        <div class="score-bar-fill" style="width:{score}%;background-color:{score_color};"></div>
+                    </div>
+                    ⭐ {hotel['rating']} &nbsp;|&nbsp; 📝 {hotel['review_count']:,} reviews<br>
                     🏔️ {hotel['travel_theme']} theme &middot; {hotel['region']} region<br>
-                    💰 PKR {hotel['price_per_day_pkr']:,.0f}/day per room<br>
-                    {room_line}🧾 Est. stay total: PKR {hotel['estimated_stay_cost_pkr']:,.0f}<br>
+                    💰 PKR {hotel['price_per_day_pkr']:,.0f} (${price_usd:,.2f})/day per room<br>
+                    {room_line}🧾 Est. stay total: PKR {hotel['estimated_stay_cost_pkr']:,.0f} (${total_usd:,.2f})<br>
                     👥 Up to {hotel['max_guests']} guests per room
                     </div>""",
                     unsafe_allow_html=True,
