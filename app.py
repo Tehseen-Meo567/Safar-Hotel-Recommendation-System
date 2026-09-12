@@ -453,8 +453,6 @@ with dl2:
         mime="application/json"
     )
 
-preview_tab1, preview_tab2 = st.tabs(["budget_data.json preview", "hotel-recommendation.json preview"])
-with preview_tab1:
-    st.json(budget_payload)
-with preview_tab2:
+preview_tab = st.tabs(["hotel-recommendation.json preview"])
+with preview_tab:
     st.json(hotel_payload)
