@@ -211,6 +211,7 @@ else:
         destinations=destinations,
         travel_style=travel_style,
         duration_days=int(trip_duration),
+        travelers=int(travelers),
         hotel_budget_pkr=alloc_hotels,
         top_n=3,
     )
@@ -255,15 +256,20 @@ else:
 
         cols = st.columns(len(city_data["hotels"]))
         for col, hotel in zip(cols, city_data["hotels"]):
+            rooms = hotel["rooms_needed"]
+            room_line = (
+                f"🛏️ {rooms} rooms needed for {travelers} guests<br>"
+                if rooms > 1 else ""
+            )
             with col:
                 st.markdown(
                     f"""<div class="card-box">
                     <b>{hotel['hotel_name']}</b><br>
                     ⭐ {hotel['rating']} &nbsp;|&nbsp; {hotel['hotel_type']}<br>
                     🏔️ {hotel['travel_theme']} theme &middot; {hotel['region']} region<br>
-                    💰 PKR {hotel['price_per_day_pkr']:,.0f}/day<br>
-                    🧾 Est. stay total: PKR {hotel['estimated_stay_cost_pkr']:,.0f}<br>
-                    👥 Up to {hotel['max_guests']} guests
+                    💰 PKR {hotel['price_per_day_pkr']:,.0f}/day per room<br>
+                    {room_line}🧾 Est. stay total: PKR {hotel['estimated_stay_cost_pkr']:,.0f}<br>
+                    👥 Up to {hotel['max_guests']} guests per room
                     </div>""",
                     unsafe_allow_html=True,
                 )
