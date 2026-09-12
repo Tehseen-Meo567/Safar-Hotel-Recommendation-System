@@ -198,7 +198,7 @@ with viz_col2:
 st.divider()
 
 # ----------------------------------------------------
-# 3.5 HOTEL & ACCOMMODATION RECOMMENDATION (Member 3)
+# 3.5 HOTEL & ACCOMMODATION RECOMMENDATION 
 # ----------------------------------------------------
 st.subheader("3. Hotel Recommendations")
 
@@ -399,9 +399,7 @@ st.divider()
 # ----------------------------------------------------
 st.subheader("3. Trip Payload")
 
-# Original Member 2 schema, unchanged — kept separate so anything already
-# consuming budget_data.json (per the team's original contract) doesn't
-# have to change or wade through hotel data it doesn't expect.
+
 budget_payload = {
     "user_profile": {
         "travelers": int(travelers),
@@ -426,7 +424,7 @@ budget_payload = {
     "is_feasible": bool(is_feasible),
 }
 
-# Fuller payload — everything above PLUS hotel recommendations, for
+# Fuller payload — everything along with hotel recommendations, for
 # Member 4/Member 1 or anyone who wants the complete picture in one file.
 hotel_payload = {
     **budget_payload,
