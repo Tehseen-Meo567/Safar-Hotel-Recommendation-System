@@ -907,6 +907,6 @@ with dl2:
         file_name="hotel-recommendation.json",
         mime="application/json"
     )
-
-with st.expander("View Payload Preview"):
-    st.json(hotel_payload)
+preview_tab1, preview_tab2 = st.tabs(["budget_data.json preview", "hotel-recommendation.json preview"])
+with preview_tab1:
+    st.json(budget_payload)
