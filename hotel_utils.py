@@ -71,18 +71,27 @@ def recommend_hotels(
     top_n: int = 3,
 ) -> dict:
     """
-    Recommend up to `top_n` hotels per destination city.
+    Recommend up to `top_n` hotels per destination city, prioritizing
+    budget fit over everything else (per Member 3's brief: "recommend
+    budget-friendly accommodation options").
 
-    Splits `hotel_budget_pkr` evenly across the number of destinations, then
-    for each city:
-      1. Filters to the requested tier (Hotel_Type).
-      2. If that tier isn't available in the city, falls back to whatever
-         tier IS available (flagged in the result).
-      3. Prefers hotels whose full-stay cost fits the city's budget slice;
-         if none fit, still returns the closest options (flagged
-         `within_budget: False`) so the UI can warn instead of showing
-         nothing.
-      4. Ranks by rating (desc), then price (asc).
+    Splits `hotel_budget_pkr` evenly across the number of destinations,
+    then for each city tries, in order:
+      1. The requested tier (Hotel_Type), hotels that fit the per-city
+         budget slice, ranked by rating (desc) then price (asc) — i.e.
+         best value among affordable options.
+      2. If none fit, step DOWN through cheaper tiers
+         (Budget/Backpacker -> Standard -> Luxury, only tiers cheaper
+         than requested) looking for hotels that fit the budget.
+      3. If nothing in any tier fits the budget, fall back to the
+         requested tier's hotels sorted by PRICE ASCENDING (cheapest
+         first) rather than rating — showing the closest-to-affordable
+         option instead of the priciest highly-rated one.
+      4. If the requested tier doesn't exist in that city at all, fall
+         back to the whole city's inventory, cheapest first.
+
+    Every result carries `within_budget` and `tier_used` so the UI can
+    be transparent about which of the above paths was taken.
 
     Returns a dict keyed by city name, e.g.:
     {
@@ -100,16 +109,14 @@ def recommend_hotels(
     n_cities = max(len(destinations), 1)
     per_city_budget = hotel_budget_pkr / n_cities
 
-    display_cols = [
-        "Hotel_id", "Region", "City", "Travel_Theme", "Hotel_Name",
-        "Hotel_Type", "Rating", "Star_Hotel", "Max_Guests",
-        "Estimated Price/Day", "Amenities_List",
-    ]
+    # Tiers cheaper than (or equal to) the requested one, cheapest first,
+    # used for step-down fallback when the requested tier is unaffordable.
+    req_idx = TIER_FALLBACK_ORDER.index(requested_tier) if requested_tier in TIER_FALLBACK_ORDER else 1
 
     results = {}
 
     for city in destinations:
-        city_df = df[df["City"] == city]
+        city_df = df[df["City"] == city].copy()
 
         if city_df.empty:
             results[city] = {
@@ -122,26 +129,49 @@ def recommend_hotels(
             }
             continue
 
-        tier_df = city_df[city_df["Hotel_Type"] == requested_tier]
-        tier_used = requested_tier
-        note = None
+        city_df["Est_Stay_Cost"] = city_df["Estimated Price/Day"] * duration_days
 
-        if tier_df.empty:
-            tier_df = city_df
-            tier_used = "Mixed (requested tier unavailable here)"
+        tier_used = requested_tier
+        within_budget = False
+        note = None
+        pool = None
+
+        # Try tiers from requested down to cheapest, stop at first with an affordable match
+        search_order = TIER_FALLBACK_ORDER[: req_idx + 1][::-1]  # requested tier first, then cheaper ones
+        for tier in search_order:
+            tier_df = city_df[city_df["Hotel_Type"] == tier]
+            if tier_df.empty:
+                continue
+            affordable = tier_df[tier_df["Est_Stay_Cost"] <= per_city_budget]
+            if not affordable.empty:
+                pool = affordable.sort_values(
+                    by=["Rating_Num", "Estimated Price/Day"], ascending=[False, True]
+                )
+                tier_used = tier
+                within_budget = True
+                if tier != requested_tier:
+                    note = (
+                        f"No '{requested_tier}' hotel in {city} fit the budget; "
+                        f"showing '{tier}' options that do instead."
+                    )
+                break
+
+        # Step 3 / 4: nothing affordable at or below the requested tier.
+        if pool is None:
+            tier_df = city_df[city_df["Hotel_Type"] == requested_tier]
+            if tier_df.empty:
+                tier_df = city_df  # tier doesn't exist in this city at all
+                tier_used = "Mixed (requested tier unavailable here)"
+            else:
+                tier_used = requested_tier
+            pool = tier_df.sort_values(by=["Estimated Price/Day"], ascending=True)
+            within_budget = False
             note = (
-                f"No '{requested_tier}' hotels found in {city}; "
-                "showing best available options across tiers instead."
+                f"Even the cheapest '{tier_used}' option in {city} exceeds the "
+                f"PKR {per_city_budget:,.0f} hotel budget for this destination — "
+                "showing the lowest-cost options available."
             )
 
-        tier_df = tier_df.copy()
-        tier_df["Est_Stay_Cost"] = tier_df["Estimated Price/Day"] * duration_days
-
-        affordable = tier_df[tier_df["Est_Stay_Cost"] <= per_city_budget]
-        within_budget = not affordable.empty
-        pool = affordable if within_budget else tier_df
-
-        pool = pool.sort_values(by=["Rating_Num", "Estimated Price/Day"], ascending=[False, True])
         top = pool.head(top_n)
 
         hotels_out = []
