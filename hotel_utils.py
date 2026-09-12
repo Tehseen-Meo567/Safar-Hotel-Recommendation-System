@@ -63,6 +63,55 @@ def _tier_for_style(travel_style: str) -> str:
     return TIER_MAP.get(travel_style, travel_style)
 
 
+# ----------------------------------------------------------------------
+# Composite recommendation score — the "brain" of the recommender.
+# Combines rating, star class, review volume, and budget fit into one
+# transparent number so the system genuinely ranks/selects hotels
+# instead of sorting on a single field.
+# ----------------------------------------------------------------------
+
+SCORE_WEIGHTS = {
+    "rating": 0.35,
+    "star": 0.15,
+    "reviews": 0.15,
+    "budget_fit": 0.35,
+}
+
+# Reviews above this count are treated as "maximally popular" (score caps at 1.0)
+REVIEW_NORMALIZATION_CAP = 30000
+
+
+def _hotel_score(rating_num: float, star_hotel: int, review_count: int,
+                  est_stay_cost: float, per_city_budget: float) -> float:
+    """
+    Returns a 0-100 composite recommendation score.
+
+    - rating: hotel's own rating out of 5, normalized to 0-1
+    - star: official star class out of 5, normalized to 0-1
+    - reviews: review volume, normalized against REVIEW_NORMALIZATION_CAP
+    - budget_fit: per_city_budget / est_stay_cost, capped at 1.0 — a hotel
+      exactly at budget scores 1.0; a hotel at 2x budget scores 0.5; a
+      hotel well under budget still scores a full 1.0 (we don't reward
+      going *unnecessarily* cheap beyond the budget, only penalize going over)
+    """
+    rating_score = min(max(rating_num, 0) / 5.0, 1.0)
+    star_score = min(max(star_hotel, 0) / 5.0, 1.0)
+    review_score = min(max(review_count, 0) / REVIEW_NORMALIZATION_CAP, 1.0)
+
+    if per_city_budget > 0 and est_stay_cost > 0:
+        budget_fit_score = min(per_city_budget / est_stay_cost, 1.0)
+    else:
+        budget_fit_score = 0.0
+
+    score = (
+        SCORE_WEIGHTS["rating"] * rating_score
+        + SCORE_WEIGHTS["star"] * star_score
+        + SCORE_WEIGHTS["reviews"] * review_score
+        + SCORE_WEIGHTS["budget_fit"] * budget_fit_score
+    )
+    return round(score * 100, 1)
+
+
 def recommend_hotels(
     df: pd.DataFrame,
     destinations: list,
@@ -83,20 +132,24 @@ def recommend_hotels(
     Max_Guests capacity — e.g. 10 travelers at a 4-guest-max hotel needs
     3 rooms, not 1):
       1. The requested tier (Hotel_Type), hotels that fit the per-city
-         budget slice, ranked by rating (desc) then price (asc) — i.e.
-         best value among affordable options.
+         budget slice, ranked by a composite recommendation SCORE (rating,
+         star class, review volume, and budget fit combined — see
+         `_hotel_score`), not a single field.
       2. If none fit, step DOWN through cheaper tiers
          (Budget/Backpacker -> Standard -> Luxury, only tiers cheaper
          than requested) looking for hotels that fit the budget.
       3. If nothing in any tier fits the budget, fall back to the
-         requested tier's hotels sorted by PRICE ASCENDING (cheapest
-         first) rather than rating — showing the closest-to-affordable
-         option instead of the priciest highly-rated one.
+         requested tier's hotels still ranked by the same composite
+         score — which naturally favors the cheapest, best-reviewed
+         option even when nothing is fully affordable, rather than
+         showing the priciest highly-rated one.
       4. If the requested tier doesn't exist in that city at all, fall
-         back to the whole city's inventory, cheapest first.
+         back to the whole city's inventory, same scoring.
 
     Every result carries `within_budget` and `tier_used` so the UI can
-    be transparent about which of the above paths was taken.
+    be transparent about which of the above paths was taken, and every
+    hotel carries a `recommendation_score` (0-100) so the UI can show
+    *why* it was picked, not just that it was.
 
     Returns a dict keyed by city name, e.g.:
     {
@@ -140,6 +193,13 @@ def recommend_hotels(
         city_df["Est_Stay_Cost"] = (
             city_df["Estimated Price/Day"] * duration_days * city_df["Rooms_Needed"]
         )
+        city_df["Recommendation_Score"] = city_df.apply(
+            lambda r: _hotel_score(
+                r["Rating_Num"], r["Star_Hotel"], r["Review_Count"],
+                r["Est_Stay_Cost"], per_city_budget,
+            ),
+            axis=1,
+        )
 
         tier_used = requested_tier
         within_budget = False
@@ -154,9 +214,7 @@ def recommend_hotels(
                 continue
             affordable = tier_df[tier_df["Est_Stay_Cost"] <= per_city_budget]
             if not affordable.empty:
-                pool = affordable.sort_values(
-                    by=["Rating_Num", "Estimated Price/Day"], ascending=[False, True]
-                )
+                pool = affordable.sort_values(by="Recommendation_Score", ascending=False)
                 tier_used = tier
                 within_budget = True
                 if tier != requested_tier:
@@ -174,12 +232,12 @@ def recommend_hotels(
                 tier_used = "Mixed (requested tier unavailable here)"
             else:
                 tier_used = requested_tier
-            pool = tier_df.sort_values(by=["Estimated Price/Day"], ascending=True)
+            pool = tier_df.sort_values(by="Recommendation_Score", ascending=False)
             within_budget = False
             note = (
                 f"Even the cheapest '{tier_used}' option in {city} exceeds the "
                 f"PKR {per_city_budget:,.0f} hotel budget for this destination — "
-                "showing the lowest-cost options available."
+                "showing the best-scoring options available."
             )
 
         top = pool.head(top_n)
@@ -199,6 +257,8 @@ def recommend_hotels(
                 "price_per_day_pkr": float(row["Estimated Price/Day"]),
                 "rooms_needed": int(row["Rooms_Needed"]),
                 "estimated_stay_cost_pkr": float(row["Est_Stay_Cost"]),
+                "recommendation_score": float(row["Recommendation_Score"]),
+                "review_count": int(row["Review_Count"]),
                 "amenities": row["Amenities_List"],
             })
 
