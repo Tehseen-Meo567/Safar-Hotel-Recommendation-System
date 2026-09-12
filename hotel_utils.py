@@ -15,6 +15,7 @@ Responsibilities covered here:
 """
 
 import os
+import math
 import pandas as pd
 
 try:
@@ -67,6 +68,7 @@ def recommend_hotels(
     destinations: list,
     travel_style: str,
     duration_days: int,
+    travelers: int,
     hotel_budget_pkr: float,
     top_n: int = 3,
 ) -> dict:
@@ -76,7 +78,10 @@ def recommend_hotels(
     budget-friendly accommodation options").
 
     Splits `hotel_budget_pkr` evenly across the number of destinations,
-    then for each city tries, in order:
+    then for each city tries, in order (cost always priced for the number
+    of ROOMS actually needed to fit `travelers`, per each hotel's own
+    Max_Guests capacity — e.g. 10 travelers at a 4-guest-max hotel needs
+    3 rooms, not 1):
       1. The requested tier (Hotel_Type), hotels that fit the per-city
          budget slice, ranked by rating (desc) then price (asc) — i.e.
          best value among affordable options.
@@ -129,7 +134,12 @@ def recommend_hotels(
             }
             continue
 
-        city_df["Est_Stay_Cost"] = city_df["Estimated Price/Day"] * duration_days
+        city_df["Rooms_Needed"] = city_df["Max_Guests"].apply(
+            lambda cap: math.ceil(travelers / cap) if cap > 0 else travelers
+        )
+        city_df["Est_Stay_Cost"] = (
+            city_df["Estimated Price/Day"] * duration_days * city_df["Rooms_Needed"]
+        )
 
         tier_used = requested_tier
         within_budget = False
@@ -187,6 +197,7 @@ def recommend_hotels(
                 "star_hotel": int(row["Star_Hotel"]),
                 "max_guests": int(row["Max_Guests"]),
                 "price_per_day_pkr": float(row["Estimated Price/Day"]),
+                "rooms_needed": int(row["Rooms_Needed"]),
                 "estimated_stay_cost_pkr": float(row["Est_Stay_Cost"]),
                 "amenities": row["Amenities_List"],
             })
@@ -237,10 +248,12 @@ def _fallback_explanation(hotel: dict, travelers: int, per_city_budget: float) -
     """Deterministic template used when Groq is unavailable or errors out.
     Keeps the app fully functional without an API key (e.g. for grading)."""
     fit = "fits comfortably within" if hotel["estimated_stay_cost_pkr"] <= per_city_budget else "runs a bit above"
+    rooms = hotel.get("rooms_needed", 1)
+    room_note = f" across {rooms} rooms" if rooms > 1 else ""
     return (
         f"{hotel['hotel_name']} is a solid {hotel['hotel_type'].lower()} option in "
-        f"{hotel['city']} for {travelers} traveler(s) — rated {hotel['rating']} and "
-        f"priced at PKR {hotel['price_per_day_pkr']:,.0f}/day, which {fit} your "
+        f"{hotel['city']} for {travelers} traveler(s){room_note} — rated {hotel['rating']} and "
+        f"priced at PKR {hotel['price_per_day_pkr']:,.0f}/day per room, which {fit} your "
         f"per-city hotel budget of PKR {per_city_budget:,.0f}."
     )
 
@@ -266,17 +279,20 @@ def generate_ai_explanation(
         return _fallback_explanation(hotel, travelers, per_city_budget)
 
     amenities_str = ", ".join(hotel["amenities"][:5]) if hotel["amenities"] else "no amenities listed"
+    rooms_needed = hotel.get("rooms_needed", 1)
 
     prompt = (
         "Write ONE short, friendly sentence recommending this hotel to a tourist. "
         "Use ONLY the facts given below — do not invent a rating, price, review count, "
-        "or any amenity not listed. Do not use markdown.\n\n"
+        "or any amenity not listed. If more than 1 room is needed, mention that "
+        "naturally. Do not use markdown.\n\n"
         f"Hotel name: {hotel['hotel_name']}\n"
         f"City: {hotel['city']}\n"
         f"Tier: {hotel['hotel_type']}\n"
         f"Rating: {hotel['rating']}\n"
-        f"Price per day: PKR {hotel['price_per_day_pkr']:,.0f}\n"
-        f"Estimated stay cost: PKR {hotel['estimated_stay_cost_pkr']:,.0f}\n"
+        f"Price per room per day: PKR {hotel['price_per_day_pkr']:,.0f}\n"
+        f"Rooms needed for this group: {rooms_needed}\n"
+        f"Estimated total stay cost (all rooms, all nights): PKR {hotel['estimated_stay_cost_pkr']:,.0f}\n"
         f"Traveler's per-city hotel budget: PKR {per_city_budget:,.0f}\n"
         f"Travelers: {travelers}\n"
         f"Amenities: {amenities_str}\n"
