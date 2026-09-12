@@ -909,4 +909,4 @@ with dl2:
     )
 
 with st.expander("View Payload Preview"):
-    st.json(hotel_payload_json)
+    st.json(hotel_payload)
